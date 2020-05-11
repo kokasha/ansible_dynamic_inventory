@@ -7,21 +7,25 @@ Example custom dynamic inventory script for Ansible, in Python.
 import os
 import sys
 import argparse
+import csv
 
 try:
     import json
 except ImportError:
     import simplejson as json
 
+
+
 class ExampleInventory(object):
 
-    def __init__(self):
+    def __init__(self,inventory_file):
+        self.inventory_file = inventory_file
         self.inventory = {}
         self.read_cli_args()
 
         # Called with `--list`.
         if self.args.list:
-            self.inventory = self.example_inventory()
+            self.inventory = self.read_csv_file(self.inventory_file)
         # Called with `--host [hostname]`.
         elif self.args.host:
             # Not implemented, since we return _meta info `--list`.
@@ -32,34 +36,6 @@ class ExampleInventory(object):
 
         print (json.dumps(self.inventory,indent=4));
 
-    # Example inventory for testing.
-    def example_inventory(self):
-        return {
-            'group': {
-                'hosts': ['192.168.28.71', '192.168.28.72'],
-                'vars': {
-                    'ansible_ssh_user': 'vagrant',
-                    'ansible_ssh_private_key_file':
-                        '~/.vagrant.d/insecure_private_key',
-                    'example_variable': 'value'
-                }
-            },
-            '_meta': {
-                'hostvars': {
-                    '192.168.28.71': {
-                        'host_specific_var': 'foo'
-                    },
-                    '192.168.28.72': {
-                        'host_specific_var': 'bar'
-                    }
-                }
-            }
-        }
-
-    # Empty inventory for testing.
-    def empty_inventory(self):
-        return {'_meta': {'hostvars': {}}}
-
     # Read the command line args passed to the script.
     def read_cli_args(self):
         parser = argparse.ArgumentParser()
@@ -67,5 +43,67 @@ class ExampleInventory(object):
         parser.add_argument('--host', action = 'store')
         self.args = parser.parse_args()
 
-# Get the inventory.
-ExampleInventory()
+    def read_csv_file(self,inventory_file):
+        
+        #Initialize a dict
+        inventory_data = {}
+        #Read the CSV and add it to the dictionary
+        with open(inventory_file, 'r') as fh:
+            csvdict = csv.DictReader(fh)
+            for rows in csvdict:
+                #import pdb;pdb.set_trace()
+                hostname = rows['Device Name']
+                inventory_data[hostname] = rows
+
+        result = self._build_ansible_data(inventory_data)
+        return result
+        #return inventory_data
+
+    def _build_ansible_data(self,csv_inventory_data):
+        
+        #print(json.dumps(csv_inventory_data))
+
+        all_platforms = set([i['Platform'] for i in csv_inventory_data.values() ])
+        all_locations = set([i['Location'] for i in csv_inventory_data.values() ])
+        
+        ansible_grps = dict()
+
+        for p in all_platforms:
+            
+            hosts = [ i['Device Name'] for i in csv_inventory_data.values() if i['Platform'] == p ]
+
+            ansible_grps[p] = {'hosts':hosts}
+
+        for l in all_locations:
+            
+            hosts = [ i['Device Name'] for i in csv_inventory_data.values() if i['Location'] == l ]
+
+            ansible_grps[p] = {'hosts':hosts}
+        
+        ansible_grps['all'] = list(csv_inventory_data.keys())
+
+        ansible_meta = dict()
+
+        sub_dict = {}
+        
+        ansible_meta['_meta'] = {'hostvars': sub_dict }
+
+        for h in csv_inventory_data:
+            host_vars = {}
+            host_vars['ansible_host'] = csv_inventory_data[h]['Mgmt IP']
+            host_vars['ansible_network_os'] = csv_inventory_data[h]['Platform']
+            sub_dict[h] = host_vars
+
+        return { **ansible_grps ,**ansible_meta}
+
+
+    # Empty inventory for testing.
+    def empty_inventory(self):
+        return {'_meta': {'hostvars': {}}}
+
+
+if __name__ == "__main__" :
+    inventory_file = "myinventory.csv"
+    ExampleInventory(inventory_file=inventory_file)
+    #myinventory = get_structured_inventory(inventory_file)
+    #print(json.dumps(myinventory, indent=4))
